@@ -50,38 +50,46 @@ def get_subreddit_json(endpoint, args=None):
 
 
 def get_subreddit_set(mongo_collection):
-    mongo_client = MongoClient()
-    mongo_db = mongo_client.test
-    mongo_collection = mongo_db.test_collection
-
-    results = mongo_collection.find({}, {"_id": False, "subreddits": True})
+    results = mongo_collection.find({}, {"_id": False, "watch_entry": True})
     subreddits = set()
 
     for result in results:
-        subreddit_list = result.get('subreddits')
-        for subreddit in subreddit_list:
-            subreddits.add(subreddit)
+        for entry in result.get('watch_entry'):
+            subreddits.add(entry.get('subreddit'))
 
     return subreddits
-    mongo_client.close()
 
 
 def check_subreddits_for_key_words(mongo_collection):
     subreddits = get_subreddit_set(mongo_collection)
     for subreddit in subreddits:
-        subreddit_json = get_subreddit_json("{}new/.json".format(subreddit), {"limit": 2})
+        subreddit_json = get_subreddit_json("https://reddit.com/r/{}/new/.json".format(subreddit), {"limit": 100})
         subreddit_data = subreddit_json.get('children')
-        subreddit_query = mongo_collection.find({"subreddits":subreddit}, {"_id": False, "subreddits": False})
-        for associated_information in subreddit_query:
+        related_watches_query = mongo_collection.find(
+            {
+                'watch_entry': {
+                    '$elemMatch': {
+                        'subreddit': subreddit
+                    }
+                }
+            }
+        )
+
+        for related_watch in related_watches_query:
+            for related_information in related_watch.get('watch_entry'):
+                if related_information.get('subreddit') == subreddit:
+                    related_key_words = related_information.get('key_words')
             for data in subreddit_data:
                 post_title = data.get('data').get('title')
-                if any(chosen in post_title for chosen in associated_information.get('key_words')):
-                    send_email_notification(associated_information.get('email'), data.get('data').get('permalink'))
+                with open('output.json', 'a') as file:
+                    file.write('\n{}\n'.format(json.dumps(data.get('data'))))
+                if any(keyword in post_title for keyword in related_key_words):
+                    send_email_notification(associated_information.get('_id'), data.get('data').get('permalink'))
 
 
 def main():
     mongo_client = MongoClient()
-    mongo_collection = mongo_client.test.test_collection
+    mongo_collection = mongo_client.necro_bot.necro_bot_collection
     check_subreddits_for_key_words(mongo_collection)
     mongo_client.close()
 
